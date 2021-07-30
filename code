@@ -1,0 +1,263 @@
+# In[1]:
+
+
+import glob
+
+files = glob.glob("*.csv")
+
+print(files)
+
+
+# In[2]:
+
+
+import pandas as pd
+
+df = {}
+
+for filename in files:
+    df[filename.replace('.csv', '')] = pd.read_csv(filename)
+
+print(df.keys())
+
+
+# In[3]:
+
+
+print(len(pd.unique(df['store_id_relation']['air_store_id'])))
+df['store_id_relation'].head()
+
+
+# In[4]:
+
+
+print(len(pd.unique(df['air_reserve']['air_store_id'])))
+df['air_reserve'].head()
+
+
+# In[5]:
+
+
+
+print(len(df['air_store_info']))
+df['air_store_info'].head()
+
+
+# In[6]:
+
+
+print(len(df['hpg_store_info']))
+df['hpg_store_info'].head()
+
+
+# In[7]:
+
+
+df['sample_submission'].head()
+
+
+# In[8]:
+
+
+df['air_visit_data']['visit_datetime'] = pd.to_datetime(df['air_visit_data']['visit_date'])
+df['air_visit_data']['visit_date'] = df['air_visit_data']['visit_datetime'].dt.date
+df['air_visit_data'].head()
+
+
+# In[9]:
+
+
+
+df['sample_submission']['visit_datetime'] = df['sample_submission']['id'].map(lambda x: str(x).split('_')[2])
+df['sample_submission']['air_store_id'] = df['sample_submission']['id'].map(lambda x: '_'.join(x.split('_')[:2]))
+df['sample_submission']['visit_datetime'] = pd.to_datetime(df['sample_submission']['visit_datetime'])
+df['sample_submission']['visit_date'] = df['sample_submission']['visit_datetime'].dt.date
+df['sample_submission'].drop(['id'], axis = 1, inplace = True)
+df['sample_submission'].head()
+
+
+# In[10]:
+
+
+
+total_dataset = pd.concat([df['air_visit_data'], df['sample_submission']], axis = 0)
+print(len(df['air_visit_data']))
+print(len(df['sample_submission']))
+print(len(total_dataset))
+total_dataset.head()
+
+
+# In[11]:
+
+
+df['date_info']['calendar_date'] = pd.to_datetime(df['date_info']['calendar_date'])
+df['date_info']['visit_date'] = df['date_info']['calendar_date'].dt.date
+df['date_info'] = df['date_info'].drop(['calendar_date'], axis = 1)
+df['date_info'].head()
+
+
+# In[12]:
+
+
+total_dataset = pd.merge(total_dataset, df['air_store_info'], how='left', on='air_store_id')
+total_dataset = pd.merge(total_dataset, df['date_info'], how='left', on='visit_date')
+total_dataset['visit_datetime'] = pd.to_datetime(total_dataset['visit_date'])
+total_dataset['year']  = total_dataset['visit_datetime'].dt.year
+total_dataset['month'] = total_dataset['visit_datetime'].dt.month
+total_dataset['day']   = total_dataset['visit_datetime'].dt.day
+total_dataset.drop('visit_datetime', axis=1, inplace=True)
+
+# One Hot Encoding Conversion of the 'air_genre_name', 'air_area_name', 'day_of_week', 'year' using the pandas.get_dummies 
+
+cat_features = [col for col in ['air_genre_name', 'air_area_name', 'day_of_week', 'year']]
+for column in cat_features:
+    temp = pd.get_dummies(pd.Series(total_dataset[column]))
+    total_dataset = pd.concat([total_dataset,temp],axis=1)
+    total_dataset = total_dataset.drop([column],axis=1)
+    
+total_dataset.head()
+
+
+# In[13]:
+
+
+total_dataset.drop(['latitude', 'longitude'], axis = 1, inplace = True)
+temp = pd.get_dummies(total_dataset['air_store_id'])
+total_dataset = pd.concat([total_dataset,temp],axis=1)
+total_dataset.head()
+
+
+# In[14]:
+
+
+sep = len(df['air_visit_data'])
+train = total_dataset[:sep]
+to_predict = total_dataset[sep:]
+print(len(train))
+print(len(to_predict))
+
+
+# In[15]:
+
+
+import pandas as pd
+import numpy as np
+from sklearn.metrics import mean_squared_error
+def RMSLE(y, pred):
+    return mean_squared_error(y, pred)**0.5
+
+
+# In[16]:
+
+
+col = [c for c in train if c not in ['air_store_id', 'visit_date', 'visitors']]
+X_train, y_train = train[col], train['visitors']
+X_to_predict = to_predict[col]
+value_X = X_train.values
+value_y = y_train.values
+value_X_to_predict = X_to_predict.values
+print(value_X.shape)
+print(value_y.shape)
+print(value_X_to_predict.shape)
+
+
+# In[17]:
+
+
+
+from sklearn.preprocessing import MinMaxScaler
+
+scaler_X = MinMaxScaler(feature_range=(0, 1))
+scaled_X = scaler_X.fit_transform(value_X)
+scaled_X_to_predict = scaler_X.transform(value_X_to_predict)
+
+
+# In[18]:
+
+
+from sklearn.cross_validation import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(scaled_X, value_y, test_size=0.3, random_state=42)
+
+
+# In[18]:
+
+
+from sklearn.model_selection import train_test_split
+
+X_train, X_test, y_train, y_test = train_test_split(scaled_X, value_y, test_size=0.3, random_state=42)
+
+
+# In[23]:
+
+
+pip install keras
+
+
+# In[19]:
+
+
+from keras.models import Sequential
+from keras import optimizers, regularizers
+from keras.layers import Dense, Input, Activation, Dropout
+
+# Build the Neural Network in Keras
+model = Sequential()
+model.add(Dense(512, activation = 'relu', input_shape=(958,)))
+model.add(Dense(256, activation = 'relu', input_shape=(958,)))
+model.add(Dense(128, activation='relu'))
+model.add(Dense(32, activation='relu'))
+model.add(Dense(1, activation='relu'))
+
+sgd = optimizers.SGD(lr=0.005, decay=1e-6, momentum=0.9, nesterov=False)
+
+model.compile(loss='mean_squared_error', optimizer=sgd)
+
+for l in model.layers:
+    print(l.name, l.input_shape, l.output_shape)
+
+
+# In[22]:
+
+
+pip install tensorflow
+
+
+# In[23]:
+
+
+import tensorflow
+
+
+# In[20]:
+
+
+
+
+history = model.fit(X_train, np.log1p(y_train), batch_size = 128, epochs=20,
+                    validation_data=(X_test, np.log1p(y_test)), verbose=1)
+
+
+# In[21]:
+
+
+
+
+# Evaluate the model with RMSLE
+y_ = model.predict(X_test)
+y_test = y_test.reshape(-1, 1)
+rmsle = RMSLE(np.log1p(y_test), y_)
+print('Test RMSLE: %.3f' % rmsle)
+
+
+# In[22]:
+
+
+
+y_predicted = np.expm1(model.predict(scaled_X_to_predict))
+
+submit = pd.read_csv('sample_submission.csv')
+
+submit['visitors'] = y_predicted
+
+submit.to_csv('final.csv', encoding='utf-8', index=False)
